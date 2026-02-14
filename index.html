@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lavenir Shop</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: var(--tg-theme-bg-color, #0f0f0f);
+            color: var(--tg-theme-text-color, #ffffff);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            overflow-x: hidden;
+        }
+        .card {
+            background-color: var(--tg-theme-secondary-bg-color, #1c1c1e);
+            border-radius: 16px;
+            padding: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+        .input-field {
+            background-color: var(--tg-theme-bg-color, #000);
+            color: var(--tg-theme-text-color, #fff);
+            border: 1px solid #333;
+            transition: border-color 0.3s;
+        }
+        .input-field:focus {
+            border-color: #3b82f6;
+            outline: none;
+        }
+        .btn-primary {
+            background: linear-gradient(90deg, #4f46e5, #3b82f6);
+            color: white;
+            font-weight: 600;
+            transition: transform 0.1s;
+        }
+        .btn-primary:active {
+            transform: scale(0.98);
+        }
+        /* Анимация появления */
+        .fade-in {
+            animation: fadeIn 0.4s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body class="p-4 pb-24">
+
+    <div class="flex justify-between items-center mb-6 fade-in">
+        <div>
+            <h1 class="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">Lavenir</h1>
+            <p class="text-xs text-gray-400">Poizon & China Shopping</p>
+        </div>
+        <div id="user-badge" class="bg-gray-800 text-xs py-1 px-3 rounded-full text-gray-300">
+            Гость
+        </div>
+    </div>
+
+    <div class="card mb-4 fade-in">
+        <h2 class="text-lg font-semibold mb-4 flex items-center">
+            <span class="mr-2">🧮</span> Калькулятор заказа
+        </h2>
+        
+        <div class="mb-4">
+            <label class="block text-sm text-gray-400 mb-1">Ссылка на товар</label>
+            <input type="text" id="link" placeholder="https://dw4.co/..." class="input-field w-full rounded-lg p-3 text-sm">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4 mb-4">
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Цена (¥)</label>
+                <input type="number" id="price_cny" placeholder="0" class="input-field w-full rounded-lg p-3 text-sm">
+            </div>
+            <div>
+                <label class="block text-sm text-gray-400 mb-1">Вес (кг)</label>
+                <input type="number" id="weight" placeholder="1.5" step="0.1" class="input-field w-full rounded-lg p-3 text-sm">
+            </div>
+        </div>
+
+        <div id="calculation-details" class="hidden bg-black/20 rounded-lg p-3 mb-4 text-sm space-y-2">
+            <div class="flex justify-between">
+                <span class="text-gray-400">Выкуп (курс <span id="rate-display"></span>):</span>
+                <span id="cost-items">0 ₽</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-400">Доставка:</span>
+                <span id="cost-delivery">0 ₽</span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-400">Комиссия:</span>
+                <span id="cost-comm">0 ₽</span>
+            </div>
+            <div class="flex justify-between text-green-400 text-xs hidden" id="promo-row">
+                <span>Скидка:</span>
+                <span id="cost-discount">0 ₽</span>
+            </div>
+        </div>
+
+        <div class="flex justify-between items-center border-t border-gray-700 pt-4">
+            <span class="font-medium text-gray-300">Итого к оплате:</span>
+            <span id="total-price" class="text-2xl font-bold text-white">0 ₽</span>
+        </div>
+    </div>
+
+    <button id="btn-order" class="btn-primary w-full py-4 rounded-xl text-lg shadow-lg shadow-blue-500/30 fixed bottom-4 left-4 right-4 w-[calc(100%-2rem)] max-w-md mx-auto z-50">
+        Оформить заказ
+    </button>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand(); // Раскрыть на весь экран
+
+        // КОНФИГУРАЦИЯ (Дублируем из Python)
+        const CONFIG = {
+            CNY_RATE: 13.5,
+            INSURANCE: 100,
+            DELIVERY_INTL: 800,
+            DELIVERY_RU: 450,
+            COMMISSION_LOW: 300,   // < 500 юаней
+            COMMISSION_MID: 500,   // < 1250 юаней
+            COMMISSION_PERCENT: 0.05 // > 1250 юаней
+        };
+
+        // Элементы DOM
+        const elPriceCny = document.getElementById('price_cny');
+        const elWeight = document.getElementById('weight');
+        const elLink = document.getElementById('link');
+        const elTotal = document.getElementById('total-price');
+        const elDetails = document.getElementById('calculation-details');
+        
+        // Установка данных пользователя
+        if (tg.initDataUnsafe && tg.initDataUnsafe.user) {
+            document.getElementById('user-badge').innerText = tg.initDataUnsafe.user.first_name;
+        }
+        
+        document.getElementById('rate-display').innerText = CONFIG.CNY_RATE;
+
+        // Основная функция расчета
+        function calculate() {
+            const price = parseFloat(elPriceCny.value) || 0;
+            const weight = parseFloat(elWeight.value) || 0;
+
+            if (price === 0 && weight === 0) {
+                elDetails.classList.add('hidden');
+                elTotal.innerText = "0 ₽";
+                tg.MainButton.hide();
+                return;
+            }
+
+            elDetails.classList.remove('hidden');
+
+            // 1. Стоимость товара
+            const costItems = price * CONFIG.CNY_RATE;
+
+            // 2. Комиссия
+            let comm = 0;
+            if (price < 500) comm = CONFIG.COMMISSION_LOW;
+            else if (price < 1250) comm = CONFIG.COMMISSION_MID;
+            else comm = (price * CONFIG.COMMISSION_PERCENT) * CONFIG.CNY_RATE;
+
+            // 3. Доставка
+            const delivery = (CONFIG.DELIVERY_INTL * weight) + (CONFIG.DELIVERY_RU * weight);
+            
+            // 4. Итого (с страховкой)
+            const total = costItems + delivery + comm + CONFIG.INSURANCE;
+
+            // Обновление UI
+            document.getElementById('cost-items').innerText = Math.round(costItems) + " ₽";
+            document.getElementById('cost-delivery').innerText = Math.round(delivery) + " ₽";
+            document.getElementById('cost-comm').innerText = Math.round(comm) + " ₽";
+            elTotal.innerText = Math.round(total).toLocaleString('ru-RU') + " ₽";
+
+            return {
+                price_cny: price,
+                weight: weight,
+                total: Math.round(total),
+                link: elLink.value
+            };
+        }
+
+        // Слушатели событий
+        [elPriceCny, elWeight].forEach(el => el.addEventListener('input', calculate));
+
+        // Отправка данных боту
+        document.getElementById('btn-order').addEventListener('click', () => {
+            const data = calculate();
+            
+            if (!data.link) {
+                tg.showPopup({title: 'Ошибка', message: 'Пожалуйста, вставьте ссылку на товар.'});
+                return;
+            }
+            if (data.price_cny <= 0 || data.weight <= 0) {
+                tg.showPopup({title: 'Ошибка', message: 'Введите корректную цену и вес.'});
+                return;
+            }
+
+            // Формируем JSON для отправки в Python бота
+            const payload = {
+                type: "new_order_webapp",
+                data: {
+                    price_cny: data.price_cny,
+                    weight: data.weight,
+                    link: data.link,
+                    total: data.total
+                }
+            };
+
+            tg.sendData(JSON.stringify(payload));
+        });
+
+        // Настройка главной кнопки (опционально можно использовать нативную кнопку TG)
+        // tg.MainButton.setText("Оформить заказ");
+        // tg.MainButton.onClick(() => { ... });
+    </script>
+</body>
+</html>
